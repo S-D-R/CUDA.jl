@@ -202,6 +202,33 @@ function use_local_cuda()
     end
 
     cuda_version = parse_toolkit_version("nvdisasm", __nvdisasm[])
+
+    for library in ("cublas", "cusparse", "cusolver", "cufft", "curand")
+        handle = getfield(CUDA, Symbol("__lib$library"))
+
+        path = find_cuda_library(library, cuda_dirs, cuda_version)
+        if path === nothing
+            @debug "Could not find $library"
+            return false
+        end
+        handle[] = path
+    end
+
+    # CUDA 11.1 Update 1 ships the same `nvdisasm` as 11.1 GA, so look at the version of
+    # CUBLAS to be sure which one we're dealing with (it only matters for CUPTI).
+    if cuda_version == v"11.1.0"
+        # nothing is initialized at this point, so we need to use raw ccalls.
+        handle = Ref{Ptr{Cvoid}}()
+        @assert 0 == @runtime_ccall((:cublasCreate_v2, CUDA.__libcublas[]), Cint, (Ref{Ptr{Cvoid}},), handle)
+        version = Ref{Cint}()
+        @assert 0 == @runtime_ccall((:cublasGetVersion_v2, CUDA.__libcublas[]), Cint, (Ptr{Cvoid},Ref{Cint}), handle[], version)
+        if version[] == 11300
+            cuda_version = v"11.1.1"
+        elseif version[] != 11201
+            @debug "Could not disambiguate CUDA 11.1 from Update 1 with CUBLAS version $(version[])"
+        end
+        @assert 0 == @runtime_ccall((:cublasDestroy_v2, CUDA.__libcublas[]), Cint, (Ptr{Cvoid},), handle[])
+    end
     __toolkit_version[] = cuda_version
 
     __libcupti[] = find_cuda_library("cupti", cuda_dirs, cuda_version)
@@ -221,18 +248,6 @@ function use_local_cuda()
         end
         __libdevice[] = path
     end
-
-    for library in ("cublas", "cusparse", "cusolver", "cufft", "curand")
-        handle = getfield(CUDA, Symbol("__lib$library"))
-
-        path = find_cuda_library(library, cuda_dirs, cuda_version)
-        if path === nothing
-            @debug "Could not find $library"
-            return false
-        end
-        handle[] = path
-    end
-
     @debug "Found local CUDA $(cuda_version) at $(join(cuda_dirs, ", "))"
     __toolkit_origin[] = :local
     use_local_cudnn(cuda_dirs)
