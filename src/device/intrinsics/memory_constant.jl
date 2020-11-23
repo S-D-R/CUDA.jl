@@ -2,6 +2,23 @@
 
 export CuConstantMemory, initialize_constant_memory
 
+"""
+    CuConstantMemory{T,N,Name,Shape}(value::Array{T,N})
+
+Construct an `N`-dimensional constant memory array of type `T`. The `Name` and `Shape` type parameters 
+are implementation details and it is discouraged to use them directly, instead use 
+[name(::CuConstantMemory)](@ref) and [Base.size(::CuConstantMemory)](@ref) respectively.
+
+`CuConstantMemory` is read-only, and reads are only defined within the context of a CUDA kernel function. 
+Attempts to read from `CuConstantMemory` outside of a kernel function will lead to undefined behavior.
+
+Note that `deepcopy` will be called on the `value` constructor argument, meaning that mutations to `value` or its
+elements after construction will not be reflected in the value of `CuConstantMemory`. If mutation of `CuConstantMemory`
+is desired, please use [function Base.copyto!(constant_memory::CuConstantMemory{T}, src::Array{T})](@ref)
+
+Unlike in CUDA C, structs cannot be put directly into constant memory, but this can be emulated by
+simply wrapping your struct inside of a 1-element array.
+"""
 struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
     function CuConstantMemory(value::Array{T,N}) where {T,N}
         Name = gensym("constant_memory")
@@ -14,6 +31,9 @@ struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
     end
 end
 
+"""
+Get the name of underlying global variable of this `CuConstantMemory`
+"""
 name(::CuConstantMemory{T,N,Name,Shape}) where {T,N,Name,Shape} = Name
 
 Base.:(==)(a::CuConstantMemory, b::CuConstantMemory) = name(a) == name(b)
@@ -29,9 +49,9 @@ Base.@propagate_inbounds Base.getindex(A::CuConstantMemory, i::Integer) = constm
 
 Base.IndexStyle(::Type{<:CuConstantMemory}) = Base.IndexLinear()
 
-# TODO: ideally we would use WeakKeyDict here as to not use memory unnessecarily,
+# TODO: ideally we would use WeakKeyDict here as to not use up memory unnessecarily,
 #       but we can't due to the isbits requirement of CuConstantMemory
-#       perhaps we can use WeakRef directly as the key?
+#       perhaps we can use a WeakRef directly as the key?
 const constant_memory_init_dict = Dict{CuConstantMemory,Array}()
 
 function Base.copyto!(constant_memory::CuConstantMemory{T}, src::Array{T}) where T
@@ -41,7 +61,9 @@ function Base.copyto!(constant_memory::CuConstantMemory{T}, src::Array{T}) where
     constant_memory_init_dict[constant_memory] = src
 end
 
-# initialize all constant memory in the given CuModule
+"""
+Initialize all constant memory in the given `mod`.
+"""
 function initialize_constant_memory(mod::CuModule)
     for (constant_memory, array) in constant_memory_init_dict
         try

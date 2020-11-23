@@ -21,8 +21,8 @@ Several keyword arguments are supported that influence the behavior of `@cuda`.
 - arguments that influence kernel launch: see [`CUDA.HostKernel`](@ref) and
   [`CUDA.DeviceKernel`](@ref)
 
-The underlying operations (argument conversion, kernel compilation, kernel call) can be
-performed explicitly when more control is needed, e.g. to reflect on the resource usage of a
+The underlying operations (argument conversion, kernel compilation, constant memory initialization, kernel call)
+can be performed explicitly when more control is needed, e.g. to reflect on the resource usage of a
 kernel to determine the launch configuration. A host-side kernel launch is done as follows:
 
     args = ...
@@ -30,6 +30,7 @@ kernel to determine the launch configuration. A host-side kernel launch is done 
         kernel_args = cudaconvert.(args)
         kernel_tt = Tuple{Core.Typeof.(kernel_args)...}
         kernel = cufunction(f, kernel_tt; compilation_kwargs)
+        initialize_constant_memory(kernel.mod)
         kernel(kernel_args...; launch_kwargs)
     end
 
