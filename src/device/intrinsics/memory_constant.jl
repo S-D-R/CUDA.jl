@@ -29,7 +29,9 @@ Base.@propagate_inbounds Base.getindex(A::CuConstantMemory, i::Integer) = constm
 
 Base.IndexStyle(::Type{<:CuConstantMemory}) = Base.IndexLinear()
 
-# TODO: use WeakRef here somehow to free memory, maybe do something with the CuConstantMemory finalizer?
+# TODO: ideally we would use WeakKeyDict here as to not use memory unnessecarily,
+#       but we can't due to the isbits requirement of CuConstantMemory
+#       perhaps we can use WeakRef directly as the key?
 const constant_memory_init_dict = Dict{CuConstantMemory,Array}()
 
 function Base.copyto!(constant_memory::CuConstantMemory{T}, src::Array{T}) where T
@@ -62,7 +64,6 @@ end
     return read_constant_mem(Val(Name), index, T, Val(len))
 end
 
-# TODO: alignment
 @generated function read_constant_mem(::Val{global_name}, index::Integer, ::Type{T}, ::Val{len}) where {global_name,T,len}
     JuliaContext() do ctx
         # define LLVM types
@@ -74,19 +75,22 @@ end
         llvm_f, _ = create_function(T_result, param_types)
         mod = LLVM.parent(llvm_f)
 
-        # get the constant memory global variable
+        # create a constant memory global variable
         global_name_string = string(global_name)
         T_global = LLVM.ArrayType(T_result, len)
         global_var = GlobalVariable(mod, T_global, global_name_string, AS.Constant)
         initializer!(global_var, null(T_global))
         extinit!(global_var, true)
+        # TODO: global_var alignment?
 
         # generate IR
         Builder(ctx) do builder
             entry = BasicBlock(llvm_f, "entry", ctx)
             position!(builder, entry)
 
-            typed_ptr = inbounds_gep!(builder, global_var, [ConstantInt(0, ctx), parameters(llvm_f)[1]])
+            T_global_ptr = LLVM.PointerType(T_global)
+            global_var_ptr = addrspacecast!(builder, global_var, T_global_ptr)
+            typed_ptr = inbounds_gep!(builder, global_var_ptr, [ConstantInt(0, ctx), parameters(llvm_f)[1]])
             ld = load!(builder, typed_ptr)
 
             metadata(ld)[LLVM.MD_tbaa] = tbaa_addrspace(AS.Constant, ctx)

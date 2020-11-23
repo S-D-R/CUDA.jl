@@ -1,24 +1,32 @@
 @testset "constant memory" begin
     N = 8
-    
-    @testset "basic" begin
-        init = ones(Float32, N)
+
+    @testset "array interface" begin
+        init = ones(Int32, N)
         const_mem = CuConstantMemory(init)
 
-        function kernel(a::CuDeviceArray{Float32})
+        @test size(const_mem) == size(init)
+        @test length(const_mem) == length(init)
+    end
+    
+    @testset "basic" begin
+        init = Int32[4, 5]
+        const_mem = CuConstantMemory(init)
+
+        function kernel(a::CuDeviceArray{Int32})
             tid = threadIdx().x
-        
-            a[tid] = const_mem[tid]
-        
+
+            a[tid] = const_mem[1] + const_mem[2]
+
             return nothing
         end
 
-        a = zeros(Float32, N)
+        a = zeros(Int32, N)
         dev_a = CuArray(a)
+        
+        @cuda threads = N kernel(dev_a)	
 
-        @cuda threads = N kernel(dev_a)
-
-        @test Array(dev_a) == init
+        @test all(Array(dev_a) .== sum(init))
     end
 
     @testset "2d constant memory" begin
@@ -39,6 +47,57 @@
 
         @cuda blocks = (N, N) kernel(dev_a)
 
+        @test Array(dev_a) == init
+    end
+
+    @testset "complex types" begin
+        struct RGB{T}
+            r::T
+            g::T
+            b::T
+        end
+
+        init = [RGB{Float32}(5.0, 7.0, 9.0), RGB{Float32}(6.0, 8.0, 10.0)]
+        const_mem = CuConstantMemory(init)
+
+        function kernel(a::CuDeviceArray{Float32}, b::CuDeviceArray{Float32})	
+            tid = threadIdx().x
+
+            a[tid] = const_mem[1].r + const_mem[2].g + const_mem[1].b
+            b[tid] = const_mem[2].r + const_mem[1].g + const_mem[2].b
+
+            return nothing
+        end 
+
+        a = zeros(Float32, N)
+        b = zeros(Float32, N)
+        dev_a = CuArray(a)
+        dev_b = CuArray(b)
+
+        @cuda threads = N kernel(dev_a, dev_b)
+
+        @test all(Array(dev_a) .≈ init[1].r + init[2].g + init[1].b)
+        @test all(Array(dev_b) .≈ init[2].r + init[1].g + init[2].b)
+    end
+
+    @testset "inbounds" begin
+        init = ones(Int32, N)
+        const_mem = CuConstantMemory(init)
+
+        function kernel(a::CuDeviceArray{Int32})	
+            tid = threadIdx().x
+
+            @inbounds a[tid] = const_mem[tid]
+
+            return nothing
+        end
+
+        a = zeros(Int32, N)
+        dev_a = CuArray(a)
+        
+        @cuda threads = N kernel(dev_a)	
+
+        # TODO: check the generated code for bounds checks?
         @test Array(dev_a) == init
     end
 
