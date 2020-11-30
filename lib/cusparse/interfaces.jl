@@ -1,56 +1,130 @@
 # interfacing with other packages
 
 using LinearAlgebra
-using LinearAlgebra: BlasFloat
+using LinearAlgebra: BlasComplex, BlasFloat, BlasReal
 
 function mv_wrapper(transa::SparseChar, alpha::Number, A::CuSparseMatrix{T}, X::DenseCuVector{T},
                     beta::Number, Y::CuVector{T}) where {T}
     mv!(transa, alpha, A, X, beta, Y, 'O')
 end
 
-LinearAlgebra.mul!(C::CuVector{T},A::CuSparseMatrix,B::DenseCuVector,alpha::Number,beta::Number) where {T} = mv_wrapper('N',alpha,A,B,beta,C)
-LinearAlgebra.mul!(C::CuVector{T},transA::Transpose{<:Any,<:CuSparseMatrix},B::DenseCuVector,alpha::Number,beta::Number) where {T} = mv_wrapper('T',alpha,parent(transA),B,beta,C)
-LinearAlgebra.mul!(C::CuVector{T},adjA::Adjoint{<:Any,<:CuSparseMatrix},B::DenseCuVector,alpha::Number,beta::Number) where {T} = mv_wrapper('C',alpha,parent(adjA),B,beta,C)
-LinearAlgebra.mul!(C::CuVector{T},A::HermOrSym{T,<:CuSparseMatrix{T}},B::DenseCuVector{T},alpha::Number,beta::Number) where T = mv_wrapper('N',alpha,A,B,beta,C)
-LinearAlgebra.mul!(C::CuVector{T},transA::Transpose{<:Any, <:HermOrSym{T,<:CuSparseMatrix{T}}},B::DenseCuVector{T},alpha::Number,beta::Number) where {T} = mv_wrapper('T',alpha,parent(transA),B,beta,C)
-LinearAlgebra.mul!(C::CuVector{T},adjA::Adjoint{<:Any, <:HermOrSym{T,<:CuSparseMatrix{T}}},B::DenseCuVector{T},alpha::Number,beta::Number) where {T} = mv_wrapper('C',alpha,parent(adjA),B,beta,C)
-
 function mm_wrapper(transa::SparseChar, transb::SparseChar, alpha::Number,
                     A::CuSparseMatrix{T}, B::CuMatrix{T}, beta::Number, C::CuMatrix{T}) where {T}
-    if version() < v"10.3.1" && A isa CuSparseMatrixCSR
-        # generic mm! doesn't work on CUDA 10.1 with CSC matrices
+    if version() <= v"10.3.1"
+        # Generic mm! doesn't support transposed B on CUDA10
         return mm2!(transa, transb, alpha, A, B, beta, C, 'O')
     end
     mm!(transa, transb, alpha, A, B, beta, C, 'O')
 end
 
-LinearAlgebra.mul!(C::CuMatrix{T},A::CuSparseMatrix{T},B::DenseCuMatrix{T},alpha::Number,beta::Number) where {T} = mm_wrapper('N','N',alpha,A,B,beta,C)
-LinearAlgebra.mul!(C::CuMatrix{T},A::CuSparseMatrix{T},transB::Transpose{<:Any, <:DenseCuMatrix{T}},alpha::Number,beta::Number)  where {T} = mm_wrapper('N','T',alpha,A,parent(transB),beta,C)
-LinearAlgebra.mul!(C::CuMatrix{T},transA::Transpose{<:Any, <:CuSparseMatrix{T}},B::DenseCuMatrix{T},alpha::Number,beta::Number)  where {T} = mm_wrapper('T','N',alpha,parent(transA),B,beta,C)
-LinearAlgebra.mul!(C::CuMatrix{T},transA::Transpose{<:Any, <:CuSparseMatrix{T}},transB::Transpose{<:Any, <:DenseCuMatrix{T}},alpha::Number,beta::Number) where {T} = mm_wrapper('T','T',alpha,parent(transA),parent(transB),beta,C)
-LinearAlgebra.mul!(C::CuMatrix{T},adjA::Adjoint{<:Any, <:CuSparseMatrix{T}},B::DenseCuMatrix{T},alpha::Number,beta::Number)  where {T} = mm_wrapper('C','N',alpha,parent(adjA),B,beta,C)
+tag_wrappers = ((identity, identity),
+                (T -> :(HermOrSym{T, <:$T}), A -> :(parent($A))))
+op_wrappers = (
+    (identity, 'N', identity),
+    (T -> :(Transpose{<:T, <:$T}), 'T', A -> :(parent($A))),
+    (T -> :(Adjoint{<:T, <:$T}), 'C', A -> :(parent($A)))
+)
+for (taga, untaga) in tag_wrappers, (wrapa, transa, unwrapa) in op_wrappers
+    TypeA = wrapa(taga(:(CuSparseMatrix{T})))
 
-LinearAlgebra.mul!(C::CuMatrix{T},A::HermOrSym{<:Number, <:CuSparseMatrix},B::DenseCuMatrix,alpha::Number,beta::Number) where {T} = mm_wrapper('N',alpha,A,B,beta,C)
-LinearAlgebra.mul!(C::CuMatrix{T},transA::Transpose{<:Any, <:HermOrSym{<:Number, <:CuSparseMatrix}},B::DenseCuMatrix,alpha::Number,beta::Number) where {T} = mm_wrapper('T',alpha,parent(transA),B,beta,C)
-LinearAlgebra.mul!(C::CuMatrix{T},adjA::Adjoint{<:Any, <:HermOrSym{<:Number, <:CuSparseMatrix}},B::DenseCuMatrix,alpha::Number,beta::Number) where {T} = mm_wrapper('C',alpha,parent(adjA),B,beta,C)
+    @eval begin
+        function LinearAlgebra.mul!(C::CuVector{T}, A::$TypeA, B::DenseCuVector{T},
+                                    alpha::Number, beta::Number) where {T <: BlasFloat}
+            mv_wrapper($transa, alpha, $(untaga(unwrapa(:A))), B, beta, C)
+        end
+    end
 
-Base.:(\)(A::Union{UpperTriangular{T, S},LowerTriangular{T, S}}, B::DenseCuMatrix{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sm('N',A,B,'O')
-Base.:(\)(transA::Transpose{T, UpperTriangular{T, S}}, B::DenseCuMatrix{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sm('T',parent(transA),B,'O')
-Base.:(\)(transA::Transpose{T, LowerTriangular{T, S}}, B::DenseCuMatrix{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sm('T',parent(transA),B,'O')
-Base.:(\)(adjA::Adjoint{T, UpperTriangular{T, S}},B::DenseCuMatrix{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sm('C',parent(adjA),B,'O')
-Base.:(\)(adjA::Adjoint{T, LowerTriangular{T, S}},B::DenseCuMatrix{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sm('C',parent(adjA),B,'O')
+    for (tagb, untagb) in tag_wrappers, (wrapb, transb, unwrapb) in op_wrappers
+        TypeB = wrapb(tagb(:(DenseCuMatrix{T})))
 
-Base.:(\)(A::Union{UpperTriangular{T, S},LowerTriangular{T, S}}, B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sv2('N',A,B,'O')
-Base.:(\)(transA::Transpose{T, UpperTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sv2('T',parent(transA),B,'O')
-Base.:(\)(transA::Transpose{T, LowerTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sv2('T',parent(transA),B,'O')
-Base.:(\)(adjA::Adjoint{T, UpperTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}}  = sv2('C',parent(adjA),B,'O')
-Base.:(\)(adjA::Adjoint{T, LowerTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}}  = sv2('C',parent(adjA),B,'O')
+        isadjoint(expr) = expr.head == :curly && expr.args[1] == :Adjoint
+        if isadjoint(TypeA) || isadjoint(TypeB)
+            # CUSPARSE defines adjoints only for complex inputs. For real inputs we run
+            # adjoints as tranposes so that we can still support the whole API surface of
+            # LinearAlgebra.
+            @eval begin
+                function LinearAlgebra.mul!(C::CuMatrix{T}, A::$TypeA, B::$TypeB,
+                                            alpha::Number, beta::Number) where {T <: BlasComplex}
+                    mm_wrapper($transa, $transb, alpha, $(untaga(unwrapa(:A))),
+                               $(untagb(unwrapb(:B))), beta, C)
+                end
+            end
 
-Base.:(\)(A::Union{UnitUpperTriangular{T, S},UnitLowerTriangular{T, S}}, B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sv2('N',A,B,'O',unit_diag=true)
-Base.:(\)(transA::Transpose{T, UnitUpperTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sv2('T',parent(transA),B,'O',unit_diag=true)
-Base.:(\)(transA::Transpose{T, UnitLowerTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}} = sv2('T',parent(transA),B,'O',unit_diag=true)
-Base.:(\)(adjA::Adjoint{T, UnitUpperTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}}  = sv2('C',parent(adjA),B,'O',unit_diag=true)
-Base.:(\)(adjA::Adjoint{T, UnitLowerTriangular{T, S}},B::DenseCuVector{T}) where {T<:BlasFloat, S<:AbstractCuSparseMatrix{T}}  = sv2('C',parent(adjA),B,'O',unit_diag=true)
+            transa_real = transa == 'C' ? 'T' : transa
+            transb_real = transb == 'C' ? 'T' : transb
+            @eval begin
+                function LinearAlgebra.mul!(C::CuMatrix{T}, A::$TypeA, B::$TypeB,
+                                            alpha::Number, beta::Number) where {T <: BlasReal}
+                    mm_wrapper($transa_real, $transb_real, alpha, $(untaga(unwrapa(:A))),
+                               $(untagb(unwrapb(:B))), beta, C)
+                end
+            end
+        else
+            @eval begin
+                function LinearAlgebra.mul!(C::CuMatrix{T}, A::$TypeA, B::$TypeB,
+                                            alpha::Number, beta::Number) where {T <: BlasFloat}
+                    mm_wrapper($transa, $transb, alpha, $(untaga(unwrapa(:A))),
+                               $(untagb(unwrapb(:B))), beta, C)
+                end
+            end
+        end
+    end
+end
 
-Base.:(+)(A::Union{CuSparseMatrixCSR,CuSparseMatrixCSC},B::Union{CuSparseMatrixCSR,CuSparseMatrixCSC}) = geam(A,B,'O','O','O')
-Base.:(-)(A::Union{CuSparseMatrixCSR,CuSparseMatrixCSC},B::Union{CuSparseMatrixCSR,CuSparseMatrixCSC}) = geam(A,-one(eltype(A)),B,'O','O','O')
+Base.:(+)(A::Union{CuSparseMatrixCSR,CuSparseMatrixCSC},
+          B::Union{CuSparseMatrixCSR,CuSparseMatrixCSC}) = geam(A,B,'O','O','O')
+Base.:(-)(A::Union{CuSparseMatrixCSR,CuSparseMatrixCSC},
+          B::Union{CuSparseMatrixCSR,CuSparseMatrixCSC}) = geam(A,-one(eltype(A)),B,'O','O','O')
+
+# triangular
+
+## direct
+for (t, uploc, isunitc) in ((:LowerTriangular, 'L', 'N'),
+                            (:UnitLowerTriangular, 'L', 'U'),
+                            (:UpperTriangular, 'U', 'N'),
+                            (:UnitUpperTriangular, 'U', 'U'))
+    @eval begin
+        # Left division
+        LinearAlgebra.ldiv!(A::$t{T,<:AbstractCuSparseMatrix},
+                            B::DenseCuVector{T}) where {T<:BlasFloat} =
+            sv2!('N', $uploc, $isunitc, one(T), parent(A), B, 'O')
+
+        LinearAlgebra.ldiv!(A::$t{T,<:AbstractCuSparseMatrix},
+                            B::DenseCuMatrix{T}) where {T<:BlasFloat} =
+            sm2!('N', 'N', $uploc, $isunitc, one(T), parent(A), B, 'O')
+    end
+end
+
+## adjoint/transpose ('uploc' reversed)
+for (t, uploc, isunitc) in ((:LowerTriangular, 'U', 'N'),
+                            (:UnitLowerTriangular, 'U', 'U'),
+                            (:UpperTriangular, 'L', 'N'),
+                            (:UnitUpperTriangular, 'L', 'U'))
+    @eval begin
+        # Left division with vectors
+        LinearAlgebra.ldiv!(A::$t{<:Any,<:Transpose{T,<:AbstractCuSparseMatrix}},
+                            B::DenseCuVector{T}) where {T<:BlasFloat} =
+            sv2!('T', $uploc, $isunitc, one(T), parent(parent(A)), B, 'O')
+
+        LinearAlgebra.ldiv!(A::$t{<:Any,<:Adjoint{T,<:AbstractCuSparseMatrix}},
+                            B::DenseCuVector{T}) where {T<:BlasReal} =
+            sv2!('T', $uploc, $isunitc, one(T), parent(parent(A)), B, 'O')
+
+        LinearAlgebra.ldiv!(A::$t{<:Any,<:Adjoint{T,<:AbstractCuSparseMatrix}},
+                            B::DenseCuVector{T}) where {T<:BlasComplex} =
+            sv2!('C', $uploc, $isunitc, one(T), parent(parent(A)), B, 'O')
+
+        # Left division with matrices
+        LinearAlgebra.ldiv!(A::$t{<:Any,<:Transpose{T,<:AbstractCuSparseMatrix}},
+                            B::DenseCuMatrix{T}) where {T<:BlasFloat} =
+            sm2!('T', 'N', $uploc, $isunitc, one(T), parent(parent(A)), B, 'O')
+
+        LinearAlgebra.ldiv!(A::$t{<:Any,<:Adjoint{T,<:AbstractCuSparseMatrix}},
+                            B::DenseCuMatrix{T}) where {T<:BlasReal} =
+            sm2!('T', 'N', $uploc, $isunitc, one(T), parent(parent(A)), B, 'O')
+
+        LinearAlgebra.ldiv!(A::$t{<:Any,<:Adjoint{T,<:AbstractCuSparseMatrix}},
+                            B::DenseCuMatrix{T}) where {T<:BlasComplex} =
+            sm2!('C', 'N', $uploc, $isunitc, one(T), parent(parent(A)), B, 'O')
+    end
+end

@@ -24,12 +24,15 @@ import Adapt
 
   # unsafe_wrap
   @test Base.unsafe_wrap(CuArray, CU_NULL, 1; own=false).state == CUDA.ARRAY_UNMANAGED
-  @test Base.unsafe_wrap(CuArray, CU_NULL, 2)                == CuArray{Nothing,1}(CU_NULL, (2,))
-  @test Base.unsafe_wrap(CuArray{Nothing}, CU_NULL, 2)       == CuArray{Nothing,1}(CU_NULL, (2,))
-  @test Base.unsafe_wrap(CuArray{Nothing,1}, CU_NULL, 2)     == CuArray{Nothing,1}(CU_NULL, (2,))
-  @test Base.unsafe_wrap(CuArray, CU_NULL, (1,2))            == CuArray{Nothing,2}(CU_NULL, (1,2))
-  @test Base.unsafe_wrap(CuArray{Nothing}, CU_NULL, (1,2))   == CuArray{Nothing,2}(CU_NULL, (1,2))
-  @test Base.unsafe_wrap(CuArray{Nothing,2}, CU_NULL, (1,2)) == CuArray{Nothing,2}(CU_NULL, (1,2))
+  ## compare structs without using mapreduce
+  structeq(a,b) = false
+  structeq(a::T,b::T) where T = all(field->getfield(a,field) == getfield(b,field), fieldnames(T))
+  @test structeq(Base.unsafe_wrap(CuArray, CU_NULL, 2),                CuArray{Nothing,1}(CU_NULL, (2,)))
+  @test structeq(Base.unsafe_wrap(CuArray{Nothing}, CU_NULL, 2),       CuArray{Nothing,1}(CU_NULL, (2,)))
+  @test structeq(Base.unsafe_wrap(CuArray{Nothing,1}, CU_NULL, 2),     CuArray{Nothing,1}(CU_NULL, (2,)))
+  @test structeq(Base.unsafe_wrap(CuArray, CU_NULL, (1,2)),            CuArray{Nothing,2}(CU_NULL, (1,2)))
+  @test structeq(Base.unsafe_wrap(CuArray{Nothing}, CU_NULL, (1,2)),   CuArray{Nothing,2}(CU_NULL, (1,2)))
+  @test structeq(Base.unsafe_wrap(CuArray{Nothing,2}, CU_NULL, (1,2)), CuArray{Nothing,2}(CU_NULL, (1,2)))
 
   @test collect(CUDA.zeros(2, 2)) == zeros(Float32, 2, 2)
   @test collect(CUDA.ones(2, 2)) == ones(Float32, 2, 2)
@@ -273,33 +276,63 @@ end
   let x = rand(Float32, 100)
       @test findmax(x) == findmax(CuArray(x))
       @test findmax(x; dims=1) == Array.(findmax(CuArray(x); dims=1))
+      
+      x[32] = x[33] = x[55] = x[66] = NaN32
+      @test isequal(findmax(x), findmax(CuArray(x)))
+      @test isequal(findmax(x; dims=1), Array.(findmax(CuArray(x); dims=1)))
   end
   let x = rand(Float32, 10, 10)
       @test findmax(x) == findmax(CuArray(x))
       @test findmax(x; dims=1) == Array.(findmax(CuArray(x); dims=1))
       @test findmax(x; dims=2) == Array.(findmax(CuArray(x); dims=2))
+
+      x[rand(CartesianIndices((10, 10)), 10)] .= NaN
+      @test isequal(findmax(x), findmax(CuArray(x)))
+      @test isequal(findmax(x; dims=1), Array.(findmax(CuArray(x); dims=1)))
   end
   let x = rand(Float32, 10, 10, 10)
       @test findmax(x) == findmax(CuArray(x))
       @test findmax(x; dims=1) == Array.(findmax(CuArray(x); dims=1))
       @test findmax(x; dims=2) == Array.(findmax(CuArray(x); dims=2))
       @test findmax(x; dims=3) == Array.(findmax(CuArray(x); dims=3))
+
+      x[rand(CartesianIndices((10, 10, 10)), 20)] .= NaN
+      @test isequal(findmax(x), findmax(CuArray(x)))
+      @test isequal(findmax(x; dims=1), Array.(findmax(CuArray(x); dims=1)))
+      @test isequal(findmax(x; dims=2), Array.(findmax(CuArray(x); dims=2)))
+      @test isequal(findmax(x; dims=3), Array.(findmax(CuArray(x); dims=3)))
   end
 
   let x = rand(Float32, 100)
       @test findmin(x) == findmin(CuArray(x))
       @test findmin(x; dims=1) == Array.(findmin(CuArray(x); dims=1))
+
+      x[32] = x[33] = x[55] = x[66] = NaN32
+      @test isequal(findmin(x), findmin(CuArray(x)))
+      @test isequal(findmin(x; dims=1), Array.(findmin(CuArray(x); dims=1)))
   end
   let x = rand(Float32, 10, 10)
       @test findmin(x) == findmin(CuArray(x))
       @test findmin(x; dims=1) == Array.(findmin(CuArray(x); dims=1))
       @test findmin(x; dims=2) == Array.(findmin(CuArray(x); dims=2))
+
+      x[rand(CartesianIndices((10, 10)), 10)] .= NaN
+      @test isequal(findmin(x), findmin(CuArray(x)))
+      @test isequal(findmin(x; dims=1), Array.(findmin(CuArray(x); dims=1)))
+      @test isequal(findmin(x; dims=2), Array.(findmin(CuArray(x); dims=2)))
+      @test isequal(findmin(x; dims=3), Array.(findmin(CuArray(x); dims=3)))
   end
   let x = rand(Float32, 10, 10, 10)
       @test findmin(x) == findmin(CuArray(x))
       @test findmin(x; dims=1) == Array.(findmin(CuArray(x); dims=1))
       @test findmin(x; dims=2) == Array.(findmin(CuArray(x); dims=2))
       @test findmin(x; dims=3) == Array.(findmin(CuArray(x); dims=3))
+
+      x[rand(CartesianIndices((10, 10, 10)), 20)] .= NaN
+      @test isequal(findmin(x), findmin(CuArray(x)))
+      @test isequal(findmin(x; dims=1), Array.(findmin(CuArray(x); dims=1)))
+      @test isequal(findmin(x; dims=2), Array.(findmin(CuArray(x); dims=2)))
+      @test isequal(findmin(x; dims=3), Array.(findmin(CuArray(x); dims=3)))
   end
 end
 

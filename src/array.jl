@@ -306,7 +306,7 @@ end
 
 function Base.unsafe_copyto!(dest::DenseCuArray{T}, doffs, src::DenseCuArray{T}, soffs, n) where T
   GC.@preserve src dest unsafe_copyto!(pointer(dest, doffs), pointer(src, soffs), n;
-                                       async=true, stream=CuStreamPerThread())
+                                       async=true, stream=CuDefaultStream())
   if Base.isbitsunion(T)
     # copy selector bytes
     error("Not implemented")
@@ -429,13 +429,19 @@ function Base.unsafe_convert(::Type{CuPtr{T}}, V::SubArray{T,N,P,<:Tuple{Vararg{
 end
 
 
+## PermutedDimsArray
+
+Base.unsafe_convert(::Type{CuPtr{T}}, A::PermutedDimsArray) where {T} =
+    Base.unsafe_convert(CuPtr{T}, parent(A))
+
+
 ## reshape
 
 # optimize reshape to return a CuArray
 
 function Base.reshape(a::CuArray{T,M}, dims::NTuple{N,Int}) where {T,N,M}
   if prod(dims) != length(a)
-      throw(DimensionMismatch("new dimensions $(dims) must be consistent with array size $len"))
+      throw(DimensionMismatch("new dimensions $(dims) must be consistent with array size $(size(a))"))
   end
 
   if N == M && dims == size(a)

@@ -8,18 +8,6 @@ dummy() = return
 @test_throws MethodError @cuda dummy(1)
 
 
-@testset "low-level interface" begin
-    k = cufunction(dummy)
-    k()
-    k(; threads=1)
-
-    CUDA.version(k)
-    CUDA.memory(k)
-    CUDA.registers(k)
-    CUDA.maxthreads(k)
-end
-
-
 @testset "launch configuration" begin
     @cuda dummy()
 
@@ -30,19 +18,37 @@ end
     @cuda blocks=1 dummy()
     @cuda blocks=(1,1) dummy()
     @cuda blocks=(1,1,1) dummy()
+end
 
-    @cuda config=(kernel)->() dummy()
-    @cuda config=(kernel)->(threads=1,) dummy()
-    @cuda config=(kernel)->(blocks=1,) dummy()
-    @cuda config=(kernel)->(shmem=0,) dummy()
+
+@testset "launch=false" begin
+    k = @cuda launch=false dummy()
+    k()
+    k(; threads=1)
+
+    CUDA.version(k)
+    CUDA.memory(k)
+    CUDA.registers(k)
+    CUDA.maxthreads(k)
 end
 
 
 @testset "compilation params" begin
     @cuda dummy()
 
-    memcheck || @test_throws CuError @cuda threads=2 maxthreads=1 dummy()
+    @not_if_memcheck @test_throws CuError @cuda threads=2 maxthreads=1 dummy()
     @cuda threads=2 dummy()
+end
+
+
+@testset "inference" begin
+    foo() = @cuda dummy()
+    @inferred foo()
+
+    # with arguments, we call cudaconvert
+    kernel(a) = return
+    bar(a) = @cuda kernel(a)
+    @inferred bar(CuArray([1]))
 end
 
 
@@ -52,14 +58,14 @@ end
     CUDA.code_warntype(devnull, dummy, Tuple{})
     CUDA.code_llvm(devnull, dummy, Tuple{})
     CUDA.code_ptx(devnull, dummy, Tuple{})
-    memcheck || CUDA.code_sass(devnull, dummy, Tuple{})
+    @not_if_memcheck CUDA.code_sass(devnull, dummy, Tuple{})
 
     @device_code_lowered @cuda dummy()
     @device_code_typed @cuda dummy()
     @device_code_warntype io=devnull @cuda dummy()
     @device_code_llvm io=devnull @cuda dummy()
     @device_code_ptx io=devnull @cuda dummy()
-    memcheck || @device_code_sass io=devnull @cuda dummy()
+    @not_if_memcheck @device_code_sass io=devnull @cuda dummy()
 
     mktempdir() do dir
         @device_code dir=dir @cuda dummy()
@@ -71,7 +77,7 @@ end
     @test occursin("julia_dummy", sprint(io->(@device_code_llvm io=io optimize=false @cuda dummy())))
     @test occursin("julia_dummy", sprint(io->(@device_code_llvm io=io @cuda dummy())))
     @test occursin("julia_dummy", sprint(io->(@device_code_ptx io=io @cuda dummy())))
-    memcheck || @test occursin("julia_dummy", sprint(io->(@device_code_sass io=io @cuda dummy())))
+    @not_if_memcheck @test occursin("julia_dummy", sprint(io->(@device_code_sass io=io @cuda dummy())))
 
     # make sure invalid kernels can be partially reflected upon
     let
@@ -151,8 +157,7 @@ end
     end
 
     _, out = @grab_output begin
-        @cuda kernel(1, 2, 3)
-        synchronize()
+        CUDA.@sync @cuda kernel(1, 2, 3)
     end
     @test out == "2"
 end
@@ -211,10 +216,8 @@ end
 
 
 @testset "scalar through single-value array, using device function" begin
-    function child(a, i)
-        return a[i]
-    end
-    @noinline function parent(a, x)
+    @noinline child(a, i) = a[i]
+    function parent(a, x)
         i = (blockIdx().x-1) * blockDim().x + threadIdx().x
         max = gridDim().x * blockDim().x
         if i == max
@@ -802,8 +805,7 @@ end
     end
 
     _, out = @grab_output begin
-        @cuda hello()
-        synchronize()
+        CUDA.@sync @cuda hello()
     end
     @test out == "Hello, World!"
 end
@@ -817,8 +819,7 @@ end
     end
 
     _, out = @grab_output begin
-        @cuda hello()
-        synchronize()
+        CUDA.@sync @cuda hello()
     end
     @test out == "Hello, World!"
 end
@@ -834,8 +835,7 @@ if VERSION >= v"1.1" # behavior of captured variables (box or not) has improved 
     end
 
     _, out = @grab_output begin
-        @cuda hello()
-        synchronize()
+        CUDA.@sync @cuda hello()
     end
     @test out == "Hello, World 1!"
 end
@@ -854,8 +854,7 @@ end
                  (Int64(1), Int32(2), Int16(3)),    # no padding, inequal size
                  (Int16(1), Int64(2), Int32(3)))    # mixed
         _, out = @grab_output begin
-            @cuda kernel(args...)
-            synchronize()
+            CUDA.@sync @cuda kernel(args...)
         end
         @test out == "1 2 3"
     end
@@ -890,8 +889,7 @@ end
     end
 
     _, out = @grab_output begin
-        @cuda kernel(true)
-        synchronize()
+        CUDA.@sync @cuda kernel(true)
     end
     @test out == "recurse stop"
 end
@@ -921,8 +919,7 @@ end
     end
 
     _, out = @grab_output begin
-        @cuda kernel_a(true)
-        synchronize()
+        CUDA.@sync @cuda kernel_a(true)
     end
     @test out == "a b c recurse a b c stop"
 end
@@ -942,8 +939,7 @@ end
     end
 
     _, out = @grab_output begin
-        @cuda hello()
-        synchronize()
+        CUDA.@sync @cuda hello()
     end
     @test out == "Hello, World!"
 end

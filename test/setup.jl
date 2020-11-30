@@ -10,11 +10,20 @@ testf(f, xs...; kwargs...) = TestSuite.compare(f, CuArray, xs...; kwargs...)
 
 using Random
 
-# detect cuda-memcheck
-const memcheck = haskey(ENV, "CUDA_MEMCHECK")
+# detect cuda-memcheck, to disable testts that are known to fail under cuda-memcheck
+# (e.g. those using CUPTI) or result in verbose output (deliberate API errors)
+macro not_if_memcheck(ex)
+    haskey(ENV, "CUDA_MEMCHECK") || return esc(ex)
+    quote
+        @test_skip $ex
+    end
+end
 
 # precompile the runtime library
 CUDA.precompile_runtime()
+
+# for when we include tests directly
+CUDA.allowscalar(false)
 
 
 ## entry point
@@ -43,16 +52,16 @@ function runtests(f, name, time_source=:cuda, snoop=nothing)
             CUDA.allowscalar(false)
 
             if $(QuoteNode(time_source)) == :cuda
-                CUDA.@timed @testset $"$name" begin
+                CUDA.@timed @testset $name begin
                     $f()
                 end
             elseif $(QuoteNode(time_source)) == :julia
-                res = @timed @testset $"$name" begin
+                res = @timed @testset $name begin
                     $f()
                 end
                 res..., 0, 0, 0
             else
-                error($"Unknown time source: ",$(QuoteNode(time_source)))
+                error("Unknown time source: " * $(string(time_source)))
             end
         end
         data = Core.eval(mod, ex)
@@ -185,8 +194,7 @@ macro on_device(ex)
                 return
             end
 
-            @cuda $kernel()
-            synchronize()
+            CUDA.@sync @cuda $kernel()
         end
     end)
 end
@@ -213,7 +221,7 @@ function julia_script(code, args=``)
     if Base.JLOptions().project != C_NULL
         cmd = `$cmd --project=$(unsafe_string(Base.JLOptions().project))`
     end
-    cmd = `$cmd --eval $script $args`
+    cmd = `$cmd --color=no --eval $script $args`
 
     out = Pipe()
     err = Pipe()

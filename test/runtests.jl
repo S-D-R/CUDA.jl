@@ -4,7 +4,6 @@ import REPL
 using Printf: @sprintf
 
 # parse some command-line arguments
-const cli_args = vcat(ARGS, split(get(ENV, "JULIA_CUDA_TEST_ARGS", "")))
 function extract_flag!(args, flag, default=nothing)
     for f in args
         if startswith(f, flag)
@@ -25,27 +24,27 @@ function extract_flag!(args, flag, default=nothing)
     end
     return (false, default)
 end
-do_help, _ = extract_flag!(cli_args, "--help")
+do_help, _ = extract_flag!(ARGS, "--help")
 if do_help
     println("""
         Usage: runtests.jl [--help] [--list] [--jobs=N] [TESTS...]
 
                --help             Show this text.
                --list             List all available tests.
+               --thorough         Don't allow skipping tests that are not supported.
                --jobs=N           Launch `N` processes to perform tests (default: Threads.nthreads()).
                --gpus=N           Expose `N` GPUs to test processes (default: 1).
                --memcheck[=tool]  Run the tests under `cuda-memcheck`.
                --snoop=FILE       Snoop on compiled methods and save to `FILE`.
 
-               Remaining arguments filter the tests that will be executed.
-               This list of tests, and all other options, can also be specified using the
-               JULIA_CUDA_TEST_ARGS environment variable (e.g., for use with Pkg.test).""")
+               Remaining arguments filter the tests that will be executed.""")
     exit(0)
 end
-_, jobs = extract_flag!(cli_args, "--jobs", Threads.nthreads())
-_, gpus = extract_flag!(cli_args, "--gpus", 1)
-do_memcheck, memcheck_tool = extract_flag!(cli_args, "--memcheck", "memcheck")
-do_snoop, snoop_path = extract_flag!(cli_args, "--snoop")
+_, jobs = extract_flag!(ARGS, "--jobs", Threads.nthreads())
+_, gpus = extract_flag!(ARGS, "--gpus", 1)
+do_memcheck, memcheck_tool = extract_flag!(ARGS, "--memcheck", "memcheck")
+do_snoop, snoop_path = extract_flag!(ARGS, "--snoop")
+do_thorough, _ = extract_flag!(ARGS, "--thorough")
 
 include("setup.jl")     # make sure everything is precompiled
 
@@ -87,7 +86,7 @@ unique!(tests)
 
 # parse some more command-line arguments
 ## --list to list all available tests
-do_list, _ = extract_flag!(cli_args, "--list")
+do_list, _ = extract_flag!(ARGS, "--list")
 if do_list
     println("Available tests:")
     for test in sort(tests)
@@ -96,9 +95,9 @@ if do_list
     exit(0)
 end
 ## the remaining args filter tests
-if !isempty(cli_args)
+if !isempty(ARGS)
   filter!(tests) do test
-    any(arg->startswith(test, arg), cli_args)
+    any(arg->startswith(test, arg), ARGS)
   end
 end
 ## same for an environment-variable
@@ -145,8 +144,7 @@ end
 cuda_support = CUDA.cuda_compat()
 filter!(x->x.cap in cuda_support.cap, candidates)
 ## only consider recent devices if we want testing to be thorough
-thorough = parse(Bool, get(ENV, "CI_THOROUGH", "false"))
-if thorough
+if do_thorough
     filter!(x->x.cap >= v"7.0", candidates)
 end
 isempty(candidates) && error("Could not find any suitable device for this configuration")
@@ -173,6 +171,8 @@ end
 if do_memcheck
     # CUFFT causes internal failures in cuda-memcheck
     push!(skip_tests, "cufft")
+    # CUTENSOR tests result in illegal memory accesses unregistering memory
+    push!(skip_tests, "cutensor")
     # there's also a bunch of `memcheck || ...` expressions in the tests themselves
 end
 if Sys.ARCH == :aarch64
@@ -184,7 +184,7 @@ for (i, test) in enumerate(skip_tests)
     skip_tests[i] = replace(test, '/'=>Base.Filesystem.path_separator)
 end
 filter!(in(tests), skip_tests) # only skip tests that we were going to run
-if haskey(ENV, "CI_THOROUGH")
+if do_thorough
     # we're not allowed to skip tests, so make sure we will mark them as such
     all_tests = copy(tests)
     if !isempty(skip_tests)
@@ -213,7 +213,9 @@ end
 const test_exename = popfirst!(test_exeflags.exec)
 function addworker(X; kwargs...)
     exename = if do_memcheck
-        `cuda-memcheck --tool $memcheck_tool $test_exename`
+        memcheck = CUDA.memcheck()
+        @info "Running under $(readchomp(`$memcheck --version`))"
+        `$memcheck --tool $memcheck_tool $test_exename`
     else
         test_exename
     end
