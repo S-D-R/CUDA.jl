@@ -78,6 +78,8 @@
 
         @test all(Array(dev_a) .≈ init[1].r + init[2].g + init[1].b)
         @test all(Array(dev_b) .≈ init[2].r + init[1].g + init[2].b)
+
+        @test_throws ArgumentError CuConstantMemory(["non", "isbits", "type", "isn't", "valid"])
     end
 
     @testset "inbounds" begin

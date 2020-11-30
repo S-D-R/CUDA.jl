@@ -67,7 +67,7 @@ end
 
 Acquires a global array variable handle from a named global in a module.
 """
-struct CuGlobalArray{T} # TODO: the functionality provided here can most likely be merged into CuGlobalArray{T}
+struct CuGlobalArray{T} # TODO: the functionality provided by this struct can most likely be merged into CuGlobal{T}
     buf::Mem.DeviceBuffer
 
     function CuGlobalArray{T}(mod::CuModule, name::String, len::Integer) where T

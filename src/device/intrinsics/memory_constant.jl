@@ -21,6 +21,7 @@ simply wrapping your struct inside of a 1-element array.
 """
 struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
     function CuConstantMemory(value::Array{T,N}) where {T,N}
+        Base.isbitstype(T) || throw(ArgumentError("CuConstantMemory only supports bits types"))
         Name = gensym("constant_memory")
         Name = GPUCompiler.safe_name(string(Name))
         Name = Symbol(Name)
@@ -32,7 +33,7 @@ struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
 end
 
 """
-Get the name of underlying global variable of this `CuConstantMemory`
+Get the name of underlying global variable of this `CuConstantMemory`.
 """
 name(::CuConstantMemory{T,N,Name,Shape}) where {T,N,Name,Shape} = Name
 
@@ -111,6 +112,10 @@ end
             position!(builder, entry)
 
             T_global_ptr = LLVM.PointerType(T_global)
+            # we use an addrspacecast here for two reasons:
+            # 1) this is what clang outputs
+            # 2) we do not want our global to be "split" by the SRA optimisation, adding an addrspacecast avoids this
+            # this might not be necessary however if we find a better way around SRA
             global_var_ptr = addrspacecast!(builder, global_var, T_global_ptr)
             typed_ptr = inbounds_gep!(builder, global_var_ptr, [ConstantInt(0, ctx), parameters(llvm_f)[1]])
             ld = load!(builder, typed_ptr)
