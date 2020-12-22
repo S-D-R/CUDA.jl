@@ -98,7 +98,6 @@ macro cuda(ex...)
                     local $kernel_args = map($cudaconvert, ($(var_exprs...),))
                     local $kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
                     local $kernel = $cufunction($f, $kernel_tt; $(compiler_kwargs...))
-                    $initialize_constant_memory($kernel.mod)
                     if $launch
                         $kernel($(var_exprs...); $(call_kwargs...))
                     end

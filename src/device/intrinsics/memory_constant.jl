@@ -1,23 +1,28 @@
 # Constant Memory
 
-export CuConstantMemory, initialize_constant_memory
+export CuConstantMemory
 
 """
     CuConstantMemory{T,N,Name,Shape}(value::Array{T,N})
+    CuConstantMemory{T}(::UndefInitializer, dims::Dims{N})
 
-Construct an `N`-dimensional constant memory array of type `T`. The `Name` and `Shape` type parameters 
-are implementation details and it is discouraged to use them directly, instead use 
-[name(::CuConstantMemory)](@ref) and [Base.size(::CuConstantMemory)](@ref) respectively.
+Construct an `N`-dimensional constant memory array of type `T`, where `isbits(T)`. The `Name` 
+and `Shape` type parameters are implementation details and it is discouraged to use them directly,
+instead use [name(::CuConstantMemory)](@ref) and [Base.size(::CuConstantMemory)](@ref) respectively.
+
+If the `UndefInitializer` constructor is used, all reads from `CuConstantMemory` will return `0`.
+See [function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T})](@ref) for changing the value
+of an undef initialized `CuConstantMemory` object.
 
 `CuConstantMemory` is read-only, and reads are only defined within the context of a CUDA kernel function. 
 Attempts to read from `CuConstantMemory` outside of a kernel function will lead to undefined behavior.
 
 Note that `deepcopy` will be called on the `value` constructor argument, meaning that mutations to `value` or its
-elements after construction will not be reflected in the value of `CuConstantMemory`. If mutation of `CuConstantMemory`
-is desired, please use [function Base.copyto!(constant_memory::CuConstantMemory{T}, src::Array{T})](@ref)
+elements after construction will not be reflected in the value of `CuConstantMemory`. Mutation of `CuConstantMemory`
+is possible using [function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T})](@ref).
 
-Unlike in CUDA C, structs cannot be put directly into constant memory, but this can be emulated by
-simply wrapping your struct inside of a 1-element array.
+Unlike in CUDA C, structs cannot be put directly into constant memory. This feature can be emulated however
+by simply wrapping your struct inside of a 1-element array.
 """
 struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
     function CuConstantMemory(value::Array{T,N}) where {T,N}
@@ -27,8 +32,16 @@ struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
         Name = Symbol(Name)
         Shape = size(value)
         t = new{T,N,Name,Shape}()
-        constant_memory_init_dict[t] = deepcopy(value)
+        constant_memory_initializer[Name] = deepcopy(value)
         return t
+    end
+    function CuConstantMemory{T}(::UndefInitializer, dims::Dims{N}) where {T,N}
+        Base.isbitstype(T) || throw(ArgumentError("CuConstantMemory only supports bits types"))
+        Name = gensym("constant_memory")
+        Name = GPUCompiler.safe_name(string(Name))
+        Name = Symbol(Name)
+        Shape = dims
+        return new{T,N,Name,Shape}()
     end
 end
 
@@ -50,33 +63,78 @@ Base.@propagate_inbounds Base.getindex(A::CuConstantMemory, i::Integer) = constm
 
 Base.IndexStyle(::Type{<:CuConstantMemory}) = Base.IndexLinear()
 
-# TODO: ideally we would use WeakKeyDict here as to not use up memory unnessecarily,
-#       but we can't due to the isbits requirement of CuConstantMemory
-#       perhaps we can use a WeakRef directly as the key?
-const constant_memory_init_dict = Dict{CuConstantMemory,Array}()
+# FIXME: the array values in this dict will never be garbage collected,
+#        WeakKeyDict doesn't work because of the isbits requirement of CuConstantMemory
+const constant_memory_initializer = Dict{Symbol,Array}()
 
-function Base.copyto!(constant_memory::CuConstantMemory{T}, src::Array{T}) where T
-    if size(constant_memory) != size(src)
-        throw(DimensionMismatch("size of `src` does not match size of constant memory"))
+"""
+Given a `kernel::HostKernel` returned by `@cuda`, change the value of `const_mem` to `value`.
+If `const_mem` does not occur in `kernel`, an error will be thrown.
+This function is the analogous to `cudaMemcpyToSymbol` in CUDA C.
+"""
+function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T}) where T
+    # TODO: kernel::HostKernel doesn't compile because the HostKernel type isn't defined yet
+    #       we should also define a better interface for this
+    if size(const_mem) != size(value)
+        throw(DimensionMismatch("size of `value` does not match size of constant memory"))
     end
-    constant_memory_init_dict[constant_memory] = src
+
+    global_array = CuGlobalArray{T}(kernel.mod, string(name(const_mem)), length(const_mem))
+    copyto!(global_array, value)
 end
 
-"""
-Initialize all constant memory in the given `mod`.
-"""
-function initialize_constant_memory(mod::CuModule)
-    for (constant_memory, array) in constant_memory_init_dict
-        try
-            global_array = CuGlobalArray{eltype(constant_memory)}(mod, string(name(constant_memory)), length(constant_memory))
-            copyto!(global_array, array)
-        catch e
-            if isa(e, CuError) && e.code == CUDA_ERROR_NOT_FOUND
-                # this `constant_memory` does not occur in the given `mod`
-                continue
-            else
-                throw(e)
+function emit_constant_memory_initializer!(mod::LLVM.Module)
+    for global_var in globals(mod)
+        T_global = llvmtype(global_var)
+        if addrspace(T_global) == AS.Constant
+            constant_memory_name = Symbol(LLVM.name(global_var))
+            if !haskey(constant_memory_initializer, constant_memory_name)
+                # undef initializer, we trust the user to initialize manually
+                return
             end
+            arr = constant_memory_initializer[constant_memory_name]
+            flattened_arr = reduce(vcat, arr)
+            ctx = LLVM.context(mod)
+            typ = eltype(eltype(T_global))
+            # TODO: have a look at how julia converts structs to llvm:
+            #       https://github.com/JuliaLang/julia/blob/80ace52b03d9476f3d3e6ff6da42f04a8df1cf7b/src/cgutils.cpp#L572
+            #       this only seems to emit a type though
+            if isa(typ, LLVM.IntegerType) || isa(typ, LLVM.FloatingPointType)
+                init = ConstantArray(flattened_arr, ctx)
+            elseif isa(typ, LLVM.ArrayType) # a struct with every field of the same type gets optimized to an array
+                constant_arrays = ConstantArray[]
+                for x in flattened_arr
+                    fields = collect(map(name->getfield(x, name), fieldnames(typeof(x))))
+                    constant_array = ConstantArray(fields, ctx)
+                    push!(constant_arrays, constant_array)
+                end
+                init = ConstantArray(typ, constant_arrays)
+            elseif isa(typ, LLVM.StructType)
+                constant_structs = LLVM.ConstantStruct[]
+                for x in flattened_arr
+                    constants = LLVM.Constant[]
+                    for fieldname in fieldnames(typeof(x))
+                        field = getfield(x, fieldname)
+                        if isa(field, Bool)
+                            # NOTE: Bools get compiled to i8 instead of the more "correct" type i1
+                            push!(constants, ConstantInt(LLVM.Int8Type(ctx), field))
+                        elseif isa(field, Integer)
+                            push!(constants, ConstantInt(field, ctx))
+                        elseif isa(field, AbstractFloat)
+                            push!(constants, ConstantFP(field, ctx))
+                        else
+                            throw(error("constant memory does not currently support structs with non-primitive fields ($(typeof(x)).$fieldname::$(typeof(field)))"))
+                        end
+                    end
+                    const_struct = ConstantStruct(typ, constants)
+                    push!(constant_structs, const_struct)
+                end
+                init = ConstantArray(typ, constant_structs)
+            else
+                # unreachable, but let's be safe and throw a nice error message just in case
+                throw(error("could not emit initializer for constant memory of type $typ"))
+            end
+            initializer!(global_var, init)
         end
     end
 end
@@ -102,7 +160,7 @@ end
         global_name_string = string(global_name)
         T_global = LLVM.ArrayType(T_result, len)
         global_var = GlobalVariable(mod, T_global, global_name_string, AS.Constant)
-        initializer!(global_var, null(T_global))
+        linkage!(global_var, LLVM.API.LLVMExternalLinkage) # NOTE: external linkage is the default
         extinit!(global_var, true)
         # TODO: global_var alignment?
 
@@ -111,13 +169,7 @@ end
             entry = BasicBlock(llvm_f, "entry", ctx)
             position!(builder, entry)
 
-            T_global_ptr = LLVM.PointerType(T_global)
-            # we use an addrspacecast here for two reasons:
-            # 1) this is what clang outputs
-            # 2) we do not want our global to be "split" by the SRA optimisation, adding an addrspacecast avoids this
-            # this might not be necessary however if we find a better way around SRA
-            global_var_ptr = addrspacecast!(builder, global_var, T_global_ptr)
-            typed_ptr = inbounds_gep!(builder, global_var_ptr, [ConstantInt(0, ctx), parameters(llvm_f)[1]])
+            typed_ptr = inbounds_gep!(builder, global_var, [ConstantInt(0, ctx), parameters(llvm_f)[1]])
             ld = load!(builder, typed_ptr)
 
             metadata(ld)[LLVM.MD_tbaa] = tbaa_addrspace(AS.Constant, ctx)
