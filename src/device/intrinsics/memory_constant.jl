@@ -11,18 +11,17 @@ and `Shape` type parameters are implementation details and it is discouraged to 
 instead use [name(::CuConstantMemory)](@ref) and [Base.size(::CuConstantMemory)](@ref) respectively.
 
 If the `UndefInitializer` constructor is used, all reads from `CuConstantMemory` will return `0`.
-See [function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T})](@ref) for changing the value
-of an undef initialized `CuConstantMemory` object.
+See `copyto!` for changing the value of an undef initialized `CuConstantMemory` object.
 
 `CuConstantMemory` is read-only, and reads are only defined within the context of a CUDA kernel function. 
 Attempts to read from `CuConstantMemory` outside of a kernel function will lead to undefined behavior.
 
-Note that `deepcopy` will be called on the `value` constructor argument, meaning that mutations to `value` or its
-elements after construction will not be reflected in the value of `CuConstantMemory`. Mutation of `CuConstantMemory`
-is possible using [function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T})](@ref).
+Note that `deepcopy` will be called on the `value` constructor argument, meaning that mutations to `value`
+or its elements after construction will not be reflected in the value of `CuConstantMemory`.
+Mutation of `CuConstantMemory` is possible via `copyto!`.
 
 Unlike in CUDA C, structs cannot be put directly into constant memory. This feature can be emulated however
-by simply wrapping your struct inside of a 1-element array.
+by wrapping your struct inside of a 1-element array.
 """
 struct CuConstantMemory{T,N,Name,Shape} <: AbstractArray{T,N}
     function CuConstantMemory(value::Array{T,N}) where {T,N}
@@ -68,16 +67,28 @@ Base.IndexStyle(::Type{<:CuConstantMemory}) = Base.IndexLinear()
 const constant_memory_initializer = Dict{Symbol,Array}()
 
 """
-Given a `kernel::HostKernel` returned by `@cuda`, change the value of `const_mem` to `value`.
-If `const_mem` does not occur in `kernel`, an error will be thrown.
-This function is the analogous to `cudaMemcpyToSymbol` in CUDA C.
+Copy `value` into `const_mem`. Note that this will not change the value of `const_mem`
+in kernels that are already compiled via `@cuda`.
 """
-function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T}) where T
-    # TODO: kernel::HostKernel doesn't compile because the HostKernel type isn't defined yet
-    #       we should also define a better interface for this
+function Base.copyto!(const_mem::CuConstantMemory{T}, value::Array{T}) where T
     if size(const_mem) != size(value)
         throw(DimensionMismatch("size of `value` does not match size of constant memory"))
     end
+
+    constant_memory_initializer[name(const_mem)] = value
+end
+
+"""
+Given a `kernel` returned by `@cuda`, copy `value` into `const_mem`, both in this `kernel` and all 
+new kernels using `const_mem`. If `const_mem` is not used within `kernel`, an error will be thrown.
+"""
+function Base.copyto!(kernel, const_mem::CuConstantMemory{T}, value::Array{T}) where T
+    # FIXME: specifying kernel::HostKernel doesn't compile because the HostKernel type isn't defined yet
+    if size(const_mem) != size(value)
+        throw(DimensionMismatch("size of `value` does not match size of constant memory"))
+    end
+
+    constant_memory_initializer[name(const_mem)] = value
 
     global_array = CuGlobalArray{T}(kernel.mod, string(name(const_mem)), length(const_mem))
     copyto!(global_array, value)
