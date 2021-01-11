@@ -1,6 +1,6 @@
 name = "CUDA"
 uuid = "052768ef-5323-5732-b1bb-66c8b64840ba"
-version = "2.3.0"
+version = "2.5.0"
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
@@ -28,8 +28,8 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 
 [compat]
-AbstractFFTs = "0.4, 0.5"
-Adapt = "2.2"
+AbstractFFTs = "0.4, 0.5, 1.0"
+Adapt = "2.2, 3.0"
 BFloat16s = "0.1"
 CEnum = "0.2, 0.3, 0.4"
 DataStructures = "0.17, 0.18"
@@ -39,7 +39,7 @@ GPUCompiler = "0.9"
 LLVM = "3"
 MacroTools = "0.5"
 NNlib = "0.7.7"
-Reexport = "0.2"
+Reexport = "0.2, 1.0"
 Requires = "0.5, 1.0"
 TimerOutputs = "0.5"
 julia = "1.6"
