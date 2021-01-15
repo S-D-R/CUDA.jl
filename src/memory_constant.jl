@@ -82,7 +82,7 @@ function emit_constant_memory_initializer!(mod::LLVM.Module)
         if addrspace(T_global) == AS.Constant
             constant_memory_name = Symbol(LLVM.name(global_var))
             if !haskey(constant_memory_initializer, constant_memory_name)
-                continue # non user-defined constant memory, most likely from the CUDA runtime
+                continue # non user defined constant memory, most likely from the CUDA runtime
             end
 
             arr = constant_memory_initializer[constant_memory_name].value
@@ -98,7 +98,7 @@ function emit_constant_memory_initializer!(mod::LLVM.Module)
             if isa(typ, LLVM.IntegerType) || isa(typ, LLVM.FloatingPointType)
                 init = ConstantArray(flattened_arr, ctx)
             elseif isa(typ, LLVM.ArrayType) # a struct with every field of the same type gets optimized to an array
-                constant_arrays = ConstantArray[]
+                constant_arrays = LLVM.Constant[]
                 for x in flattened_arr
                     fields = collect(map(name->getfield(x, name), fieldnames(typeof(x))))
                     constant_array = ConstantArray(fields, ctx)
@@ -106,7 +106,7 @@ function emit_constant_memory_initializer!(mod::LLVM.Module)
                 end
                 init = ConstantArray(typ, constant_arrays)
             elseif isa(typ, LLVM.StructType)
-                constant_structs = LLVM.ConstantStruct[]
+                constant_structs = LLVM.Constant[]
                 for x in flattened_arr
                     constants = LLVM.Constant[]
                     for fieldname in fieldnames(typeof(x))

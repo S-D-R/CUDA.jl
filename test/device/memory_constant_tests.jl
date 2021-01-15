@@ -232,7 +232,6 @@
         @testset "complex type" begin
             struct Struct
                 x::Int32
-                y::Float32
             end
 
             const_mem = CuConstantMemory{Struct}(undef, N)
@@ -252,7 +251,7 @@
 
             @test Array(dev_a) == map(i->const_mem[i].x, 1:N)
 
-            new_values = map(x -> Struct(x, x), 1:N)
+            new_values = map(x -> Struct(x), 1:N)
             copyto!(const_mem, new_values, kernel_obj)
 
             kernel_obj(dev_a; threads=N)
