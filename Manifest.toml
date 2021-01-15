@@ -8,11 +8,9 @@ version = "1.0.0"
 
 [[Adapt]]
 deps = ["LinearAlgebra"]
-git-tree-sha1 = "b40872b134830ba1b6f85f47f81851d95b661601"
-repo-rev = "22e52b4"
-repo-url = "https://github.com/JuliaGPU/Adapt.jl.git"
+git-tree-sha1 = "87491f7d03ae1b423a353aff99cf61a45e3c993a"
 uuid = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
-version = "3.0.0"
+version = "3.1.0"
 
 [[ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -85,7 +83,9 @@ version = "6.2.0"
 
 [[GPUCompiler]]
 deps = ["DataStructures", "InteractiveUtils", "LLVM", "Libdl", "Logging", "Scratch", "Serialization", "TimerOutputs", "UUIDs"]
-git-tree-sha1 = "6ab1bc883bc13919c25acc0fe0dea707f61ae39c"
+git-tree-sha1 = "f6bc1c82ea63686e38fa6b3517d60e504e2656b5"
+repo-rev = "18e5c07"
+repo-url = "https://github.com/JuliaGPU/GPUCompiler.jl.git"
 uuid = "61eb1bfa-7361-4325-ad38-22787b887f55"
 version = "0.9.1"
 
