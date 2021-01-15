@@ -5,6 +5,7 @@
         init = ones(Int32, N)
         const_mem = CuConstantMemory(init)
 
+        @test const_mem.value == init
         @test size(const_mem) == size(init)
         @test length(const_mem) == length(init)
     end
@@ -192,18 +193,18 @@
         @test Array(dev_a) == init
 
         new_value = collect(Float32, 1:N)
-        copyto!(kernel_obj, const_mem, new_value)
+        copyto!(const_mem, new_value, kernel_obj)
 
         kernel_obj(dev_a; threads=N)
 
         @test Array(dev_a) == new_value
 
-        @test_throws DimensionMismatch copyto!(kernel_obj, const_mem, ones(Float32, N - 1))
+        @test_throws DimensionMismatch copyto!(const_mem, ones(Float32, N - 1), kernel_obj)
     end
 
     @testset "undef initializer" begin
         @testset "primitive type" begin
-            const_mem = CuConstantMemory{Int32}(undef, (N,))
+            const_mem = CuConstantMemory{Int32}(undef, N)
 
             function kernel(a::CuDeviceArray{Int32})
                 tid = threadIdx().x
@@ -218,10 +219,10 @@
 
             kernel_obj = @cuda threads = N kernel(dev_a)
 
-            @test all(Array(dev_a) .== 0)
+            @test all(Array(dev_a) .== const_mem.value)
 
             new_value = collect(Int32, 1:N)
-            copyto!(kernel_obj, const_mem, new_value)
+            copyto!(const_mem, new_value, kernel_obj)
 
             kernel_obj(dev_a; threads=N)
 
@@ -231,9 +232,10 @@
         @testset "complex type" begin
             struct Struct
                 x::Int32
+                y::Float32
             end
 
-            const_mem = CuConstantMemory{Struct}(undef, (N,))
+            const_mem = CuConstantMemory{Struct}(undef, N)
 
             function kernel(a::CuDeviceArray{Int32})
                 tid = threadIdx().x
@@ -248,10 +250,10 @@
 
             kernel_obj = @cuda threads = N kernel(dev_a)
 
-            @test all(Array(dev_a) .== 0)
+            @test Array(dev_a) == map(i->const_mem[i].x, 1:N)
 
-            new_values = map(x -> Struct(x), 1:N)
-            copyto!(kernel_obj, const_mem, new_values)
+            new_values = map(x -> Struct(x, x), 1:N)
+            copyto!(const_mem, new_values, kernel_obj)
 
             kernel_obj(dev_a; threads=N)
 
