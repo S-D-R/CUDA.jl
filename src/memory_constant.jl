@@ -81,7 +81,9 @@ function emit_constant_memory_initializer!(mod::LLVM.Module)
         T_global = llvmtype(global_var)
         if addrspace(T_global) == AS.Constant
             constant_memory_name = Symbol(LLVM.name(global_var))
-            @assert haskey(constant_memory_initializer, constant_memory_name) "calling kernel containing unknown constant memory"
+            if !haskey(constant_memory_initializer, constant_memory_name)
+                continue # non user-defined constant memory, most likely from the CUDA runtime
+            end
 
             arr = constant_memory_initializer[constant_memory_name].value
             @assert !isnothing(arr) "calling kernel containing garbage collected constant memory"
