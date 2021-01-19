@@ -25,9 +25,6 @@ Base.hash(A::CuDeviceConstantMemory, h::UInt) = hash(name(A), h)
 
 Base.size(::CuDeviceConstantMemory{T,N,Name,Shape}) where {T,N,Name,Shape} = Shape
 
-Base.show(io::IO, A::CuDeviceConstantMemory) = print(io, "$(typeof(A))")
-Base.show(io::IO, ::MIME"text/plain", A::CuDeviceConstantMemory) = show(io, A)
-
 Base.@propagate_inbounds Base.getindex(A::CuDeviceConstantMemory, i::Integer) = constmemref(A, i)
 
 Base.IndexStyle(::Type{<:CuDeviceConstantMemory}) = Base.IndexLinear()
