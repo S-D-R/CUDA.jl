@@ -17,6 +17,7 @@ function GPUCompiler.finish_module!(job::CUDACompilerJob, mod::LLVM.Module)
            job, mod)
     emit_exception_flag!(mod)
     emit_constant_memory_initializer!(mod)
+    emit_global_memory_initializer!(mod)
 end
 
 function GPUCompiler.link_libraries!(job::CUDACompilerJob, mod::LLVM.Module,

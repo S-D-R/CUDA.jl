@@ -98,6 +98,7 @@ macro cuda(ex...)
                     local $kernel_f = $cudaconvert($f)
                     local $kernel_args = map($cudaconvert, ($(var_exprs...),))
                     local $kernel_tt = Tuple{map(Core.Typeof, $kernel_args)...}
+                    # $replace_globals(code_typed($f, $kernel_tt))
                     local $kernel = $cufunction($kernel_f, $kernel_tt; $(compiler_kwargs...))
                     if $launch
                         $kernel($(var_exprs...); $(call_kwargs...))
@@ -107,6 +108,23 @@ macro cuda(ex...)
              end)
     end
     return esc(code)
+end
+
+function replace_globals(x)
+    ci = first(first(x))
+
+    println(ci)
+
+    dump(ci)
+
+    for x in ci.code
+        if x isa GlobalRef
+            val = getproperty(x.mod, x.name)
+            val_converted = cudaconvert(val)
+            val === val_converted && continue
+            println("$x: $val => $val_converted")
+        end
+    end
 end
 
 
