@@ -14,6 +14,7 @@ include("intrinsics/misc.jl")
 include("intrinsics/wmma.jl")
 include("intrinsics/memory_constant.jl")
 include("intrinsics/memory_global.jl")
+include("intrinsics/random.jl")
 
 # functionality from libdevice
 #
