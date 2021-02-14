@@ -388,6 +388,9 @@ function cufunction_link(@nospecialize(job::CompilerJob), compiled)
         filter!(isequal("exception_flag"), compiled.external_gvars)
     end
 
+    # initialize globals for calls to rand()
+    # TODO
+
     tracked_memory = []
 
     for memory in job.params.memory_to_init
